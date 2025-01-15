@@ -1,0 +1,8 @@
+package m3u8
+
+const (
+	// Encrypt_AES128 加密方式
+	Encrypt_AES128 = "AES-128"
+)
+
+var PNG_SIGN = []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
