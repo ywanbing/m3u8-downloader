@@ -6,7 +6,7 @@ import (
 
 func TestMergeTsFileListToSingleMp4(t *testing.T) {
 	type args struct {
-		req MergeTsFileReq
+		req *MergeTsFileReq
 	}
 
 	tests := []struct {
@@ -17,7 +17,7 @@ func TestMergeTsFileListToSingleMp4(t *testing.T) {
 		{
 			name: "test",
 			args: args{
-				req: MergeTsFileReq{
+				req: &MergeTsFileReq{
 					Dir: "./temp/动画",
 					TsFileList: []string{
 						"0.ts",

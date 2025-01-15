@@ -24,13 +24,13 @@ func CheckFfmpeg() error {
 	}
 
 	// 检查目录
-	err = checkDir("./tools")
+	err = checkDir(ToolDir)
 	if err != nil {
 		return err
 	}
 
 	// 写入本地文件系统，进行命令调用
-	err = os.WriteFile("./tools/ffmpeg", file, 0777)
+	err = writeFile("./tools/ffmpeg", file)
 	if err != nil {
 		return err
 	}

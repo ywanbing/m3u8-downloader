@@ -13,8 +13,9 @@ func FfmpegCmd(cmd string, args ...string) error {
 		return err
 	}
 
+	cmdPath := filepath.Clean(filepath.Join(filepath.Join(executablePath, Tools), cmd))
 	// 2. 调用ffmpeg
-	command := exec.Command(filepath.Join("./tools", cmd), args...)
+	command := exec.Command(cmdPath, args...)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return err

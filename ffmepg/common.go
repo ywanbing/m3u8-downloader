@@ -2,12 +2,31 @@ package ffmepg
 
 import (
 	"os"
+	"path/filepath"
 )
 
+const (
+	Tools   = "tools"
+	ToolDir = "./tools"
+)
+
+var executablePath string
+
+func init() {
+	executable, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+
+	executablePath = filepath.Dir(executable)
+	return
+}
+
 func checkDir(dir string) error {
-	_, err := os.Stat(dir)
+	rawDir := filepath.Clean(filepath.Join(executablePath, dir))
+	_, err := os.Stat(rawDir)
 	if err != nil && os.IsNotExist(err) {
-		err = os.MkdirAll(dir, os.ModePerm)
+		err = os.MkdirAll(rawDir, os.ModePerm)
 		if err != nil {
 			return err
 		}
@@ -16,7 +35,8 @@ func checkDir(dir string) error {
 }
 
 func checkFfmpeg() (bool, error) {
-	_, err := os.Stat("./tools/ffmpeg")
+	ffmpegPath := filepath.Join(executablePath, "tools/ffmpeg")
+	_, err := os.Stat(ffmpegPath)
 	if err == nil {
 		return true, nil
 	}
@@ -26,4 +46,9 @@ func checkFfmpeg() (bool, error) {
 	}
 
 	return false, err
+}
+
+func writeFile(name string, data []byte) error {
+	name = filepath.Clean(filepath.Join(executablePath, name))
+	return os.WriteFile(name, data, os.ModePerm)
 }
