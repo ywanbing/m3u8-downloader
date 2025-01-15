@@ -29,8 +29,8 @@ func MergeTsFileListToSingleMp4(req *MergeTsFileReq) (err error) {
 	})
 	outPutFileName := filepath.Clean(filepath.Join(req.Dir, "../"+req.OutputMp4))
 
-	// ffmpeg -i "concat:1.ts|2.ts|3.ts" -c copy output.mp4
-	err = ffmepg.FfmpegCmd("ffmpeg", "-i", "concat:"+strings.Join(tsFiles, "|"), "-c", "copy", outPutFileName)
+	// ffmpeg -i "concat:1.ts|2.ts|3.ts" -c copy -y output.mp4
+	err = ffmepg.FfmpegCmd("ffmpeg", "-i", "concat:"+strings.Join(tsFiles, "|"), "-c", "copy", "-y", outPutFileName)
 	if err != nil {
 		return err
 	}
