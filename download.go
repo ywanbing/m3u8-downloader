@@ -2,45 +2,61 @@ package m3u8
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/grafov/m3u8"
 	"github.com/imroc/req/v3"
 )
 
 type Downloader struct {
-	client   *req.Client
-	baseUrl  *url.URL
-	dir      string // 保存文件的绝对路径
-	fileName string // 文件名,不带扩展名
-	log      *slog.Logger
-
-	key        *m3u8.Key
-	decryptKey string // 解密 key
+	baseUrl       *url.URL
+	dir           string // 保存文件的绝对路径
+	fileName      string // 文件名,不带扩展名
+	client        *req.Client
+	log           *slog.Logger
+	maxGoroutines int // 并发下载最大数
+	ctx           context.Context
 }
 
-func NewDownloader(baseUrl *url.URL, dir string, fileName string, log *slog.Logger) *Downloader {
-	if log == nil {
-		log = slog.Default()
-	}
+func NewDownloader(baseUrl *url.URL, dir string, fileName string, ops ...Options) *Downloader {
 	if strings.Contains(fileName, ".mp4") {
 		fileName, _ = strings.CutSuffix(fileName, ".mp4")
 	}
 
-	return &Downloader{
-		client:   req.C().ImpersonateChrome(),
+	d := &Downloader{
 		baseUrl:  baseUrl,
 		dir:      dir,
 		fileName: fileName,
-		log:      log,
 	}
+	for _, op := range ops {
+		op(d)
+	}
+
+	// check param
+	if d.client == nil {
+		d.client = req.C().ImpersonateChrome()
+	}
+	if d.log == nil {
+		d.log = slog.Default()
+	}
+	if d.maxGoroutines <= 0 {
+		d.maxGoroutines = runtime.NumCPU()
+	}
+	if d.ctx == nil {
+		d.ctx = context.Background()
+	}
+
+	return d
 }
 
 func (d *Downloader) Download() error {
@@ -77,43 +93,76 @@ func (d *Downloader) Download() error {
 
 	// TODO
 	if listType == m3u8.MASTER {
-		// 展示不支持
+		// 暂时不支持
 		d.log.Error("listType is MASTER not at this time")
 		return nil
 	}
 
+	return d.downloadTs(playlist)
+}
+
+func (d *Downloader) downloadTs(playlist m3u8.Playlist) error {
+	dlNum := make(chan struct{}, d.maxGoroutines)
+	ctx, cancel := context.WithCancelCause(d.ctx)
+	defer cancel(nil)
+
+	decryptKey := ""
+	var err error
 	// 获取ts文件
 	tsList := playlist.(*m3u8.MediaPlaylist).Segments
+	wg := new(sync.WaitGroup)
 	for _, ts := range tsList {
+		select {
+		case <-d.ctx.Done():
+			return d.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		if ts == nil {
 			continue
 		}
+
 		if ts.Key != nil {
 			// 获取 enc key
-			err = d.getAndSetEncKey(ts.Key)
+			decryptKey, err = d.getAndSetEncKey(ts.Key)
 			if err != nil {
 				d.log.Warn("get enc key", slog.String("err", err.Error()))
 				return err
 			}
 		}
 
-		err = d.downloadTsFile(ts)
-		if err != nil {
-			return err
+		select {
+		case <-d.ctx.Done():
+			return d.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		case dlNum <- struct{}{}:
+			wg.Add(1)
+			go func(ts *m3u8.MediaSegment, decryptKey string) {
+				err := d.downloadTsFile(ctx, ts, decryptKey)
+				if err != nil {
+					cancel(err)
+				}
+				<-dlNum
+				wg.Done()
+			}(ts, decryptKey)
 		}
 	}
 
+	// 等待下载完成
+	wg.Wait()
 	return nil
 }
 
 // getAndSetEncKey 获取 enc key
-func (d *Downloader) getAndSetEncKey(key *m3u8.Key) error {
+func (d *Downloader) getAndSetEncKey(key *m3u8.Key) (string, error) {
 	if key == nil {
-		return nil
+		return "", nil
 	}
 	uri, err := absolutist(key.URI, d.baseUrl)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if key.Method == Encrypt_AES128 {
@@ -121,21 +170,17 @@ func (d *Downloader) getAndSetEncKey(key *m3u8.Key) error {
 		res := d.client.Get(uri.String()).Do()
 		if res.Err != nil || !res.IsSuccessState() {
 			d.log.Warn("req %s err :%v", key.URI, res.IsSuccessState())
-			return res.Err
+			return "", res.Err
 		}
-
-		// 设置对应参数
-		d.key = key
-		d.decryptKey = res.String()
-		return nil
+		return res.String(), nil
 	}
 
-	return errors.New("unsupported encrypt method")
+	return "", errors.New("unsupported encrypt method")
 }
 
 // 下载ts文件
 // @modify: 2020-08-13 修复ts格式SyncByte合并不能播放问题
-func (d *Downloader) downloadTsFile(ts *m3u8.MediaSegment) error {
+func (d *Downloader) downloadTsFile(ctx context.Context, ts *m3u8.MediaSegment, decryptKey string) error {
 	downloadDir := filepath.Join(d.dir, d.fileName)
 	tsUrl, err := absolutist(ts.URI, d.baseUrl)
 	if err != nil {
@@ -148,7 +193,7 @@ func (d *Downloader) downloadTsFile(ts *m3u8.MediaSegment) error {
 	d.log.Info("parse ts", slog.String("tsUrl", tsUrlStr), slog.String("fileName", fileName))
 
 	// TODO 检测文件是否存在,进行断点续传
-	res := d.client.Get(tsUrlStr).Do()
+	res := d.client.Get(tsUrlStr).Do(ctx)
 	if res.Err != nil || !res.IsSuccessState() {
 		d.log.Warn("download ts error", slog.String("tsUrl", tsUrlStr))
 		return res.Err
@@ -156,12 +201,9 @@ func (d *Downloader) downloadTsFile(ts *m3u8.MediaSegment) error {
 
 	origData := res.Bytes()
 	// 解密出视频 ts 源文件
-	if d.key != nil {
-		if d.key.Method != Encrypt_AES128 {
-			return errors.New("unsupported encrypt method")
-		}
+	if decryptKey != "" {
 		// 解密 ts 文件，算法：aes 128 cbc pack5
-		origData, err = AesDecrypt(origData, []byte(d.decryptKey))
+		origData, err = AesDecrypt(origData, []byte(decryptKey))
 		if err != nil {
 			return err
 		}
