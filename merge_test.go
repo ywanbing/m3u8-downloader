@@ -91,7 +91,7 @@ func TestMergeTsFileListToSingleMp4(t *testing.T) {
 						"68.ts",
 						"69.ts",
 					},
-					OutputMp4: "output.mp4",
+					OutputMp4: "动画.mp4",
 					AfterDel:  false,
 				},
 			},
